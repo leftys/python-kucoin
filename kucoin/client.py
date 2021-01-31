@@ -86,7 +86,7 @@ class Client(object):
                    'KC-API-KEY': self.API_KEY,
                    'KC-API-PASSPHRASE': self.API_PASSPHRASE}
         self.session = httpx.AsyncClient(
-            http2 = True,
+            # http2 = True,
             headers = headers
         )
 
