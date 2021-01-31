@@ -43,7 +43,7 @@ class ReconnectingWebsocket:
         self._last_ping = time.time()  # record last ping
         # get the websocket details
         self._ws_details = None
-        self._ws_details = self._client.get_ws_endpoint(self._private)
+        self._ws_details = await self._client.get_ws_endpoint(self._private)
 
         async with ws.connect(self._get_ws_endpoint(), ssl=self._get_ws_encryption()) as socket:
             self._socket = socket
@@ -72,7 +72,7 @@ class ReconnectingWebsocket:
                 keep_waiting = False
                 await self._reconnect()
             except Exception as e:
-                self._log.debug('ws exception:{}'.format(e))
+                self._log.warning('ws exception:{}'.format(e))
                 keep_waiting = False
                 await self._reconnect()
 

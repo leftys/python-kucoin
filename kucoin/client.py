@@ -1,3 +1,5 @@
+from typing import Optional
+
 import base64
 import calendar
 import hashlib
@@ -5,7 +7,8 @@ import hmac
 import time
 from datetime import datetime
 
-import requests
+import httpx
+import ujson
 
 from .exceptions import (
     KucoinAPIException, KucoinRequestException, MarketOrderException, LimitOrderException
@@ -74,18 +77,21 @@ class Client(object):
             self.API_URL = self.REST_API_URL
 
         self._requests_params = requests_params
-        self.session = self._init_session()
+        self.session: Optional[httpx.Client] = None
 
-    def _init_session(self):
-
-        session = requests.session()
+    async def start(self):
         headers = {'Accept': 'application/json',
                    'User-Agent': 'python-kucoin',
                    'Content-Type': 'application/json',
                    'KC-API-KEY': self.API_KEY,
                    'KC-API-PASSPHRASE': self.API_PASSPHRASE}
-        session.headers.update(headers)
-        return session
+        self.session = httpx.AsyncClient(
+            http2 = True,
+            headers = headers
+        )
+
+    async def stop(self):
+        await self.session.aclose()
 
     @staticmethod
     def _get_params_for_sig(data):
@@ -126,7 +132,7 @@ class Client(object):
     def _create_uri(self, path):
         return '{}{}'.format(self.API_URL, path)
 
-    def _request(self, method, path, signed, **kwargs):
+    async def _request(self, method, path, signed, **kwargs):
 
         # set default requests timeout
         kwargs['timeout'] = 10
@@ -154,7 +160,7 @@ class Client(object):
         if signed and method != 'get' and kwargs['data']:
             kwargs['data'] = compact_json_dict(kwargs['data'])
 
-        response = getattr(self.session, method)(uri, **kwargs)
+        response = await self.session.request(method, uri, **kwargs)
         return self._handle_response(response)
 
     @staticmethod
@@ -167,7 +173,7 @@ class Client(object):
         if not str(response.status_code).startswith('2'):
             raise KucoinAPIException(response)
         try:
-            res = response.json()
+            res = ujson.loads(response.content)
 
             if 'code' in res and res['code'] != "200000":
                 raise KucoinAPIException(response)
@@ -183,19 +189,19 @@ class Client(object):
         except ValueError:
             raise KucoinRequestException('Invalid Response: %s' % response.text)
 
-    def _get(self, path, signed=False, **kwargs):
-        return self._request('get', path, signed, **kwargs)
+    async def _get(self, path, signed=False, **kwargs):
+        return await self._request('get', path, signed, **kwargs)
 
-    def _post(self, path, signed=False, **kwargs):
-        return self._request('post', path, signed, **kwargs)
+    async def _post(self, path, signed=False, **kwargs):
+        return await self._request('post', path, signed, **kwargs)
 
-    def _put(self, path, signed=False, **kwargs):
-        return self._request('put', path, signed, **kwargs)
+    async def _put(self, path, signed=False, **kwargs):
+        return await self._request('put', path, signed, **kwargs)
 
-    def _delete(self, path, signed=False, **kwargs):
-        return self._request('delete', path, signed, **kwargs)
+    async def _delete(self, path, signed=False, **kwargs):
+        return await self._request('delete', path, signed, **kwargs)
 
-    def get_timestamp(self):
+    async def get_timestamp(self):
         """Get the server timestamp
 
         https://docs.kucoin.com/#time
@@ -203,11 +209,11 @@ class Client(object):
         :return: response timestamp in ms
 
         """
-        return self._get("timestamp")
+        return await self._get("timestamp")
 
     # Currency Endpoints
 
-    def get_currencies(self):
+    async def get_currencies(self):
         """List known currencies
 
         https://docs.kucoin.com/#get-currencies
@@ -239,9 +245,9 @@ class Client(object):
 
         """
 
-        return self._get('currencies', False)
+        return await self._get('currencies', False)
 
-    def get_currency(self, currency):
+    async def get_currency(self, currency):
         """Get single currency detail
 
         https://docs.kucoin.com/#get-currency-detail
@@ -270,11 +276,11 @@ class Client(object):
 
         """
 
-        return self._get('currencies/{}'.format(currency), False)
+        return await self._get('currencies/{}'.format(currency), False)
 
     # User Account Endpoints
 
-    def get_accounts(self):
+    async def get_accounts(self):
         """Get a list of accounts
 
         https://docs.kucoin.com/#accounts
@@ -310,9 +316,9 @@ class Client(object):
 
         """
 
-        return self._get('accounts', True)
+        return await self._get('accounts', True)
 
-    def get_account(self, account_id):
+    async def get_account(self, account_id):
         """Get an individual account
 
         https://docs.kucoin.com/#get-an-account
@@ -339,9 +345,9 @@ class Client(object):
 
         """
 
-        return self._get('accounts/{}'.format(account_id), True)
+        return await self._get('accounts/{}'.format(account_id), True)
 
-    def create_account(self, account_type, currency):
+    async def create_account(self, account_type, currency):
         """Create an account
 
         https://docs.kucoin.com/#create-an-account
@@ -372,9 +378,9 @@ class Client(object):
             'currency': currency
         }
 
-        return self._post('accounts', True, data=data)
+        return await self._post('accounts', True, data=data)
 
-    def get_account_activity(self, account_id, start=None, end=None, page=None, limit=None):
+    async def get_account_activity(self, account_id, start=None, end=None, page=None, limit=None):
         """Get list of account activity
 
         https://docs.kucoin.com/#get-account-history
@@ -452,9 +458,9 @@ class Client(object):
         if limit:
             data['pageSize'] = limit
 
-        return self._get('accounts/{}/ledgers'.format(account_id), True, data=data)
+        return await self._get('accounts/{}/ledgers'.format(account_id), True, data=data)
 
-    def get_account_holds(self, account_id, page=None, page_size=None):
+    async def get_account_holds(self, account_id, page=None, page_size=None):
         """Get account holds placed for any active orders or pending withdraw requests
 
         https://docs.kucoin.com/#get-holds
@@ -511,9 +517,9 @@ class Client(object):
         if page_size:
             data['pageSize'] = page_size
 
-        return self._get('accounts/{}/holds'.format(account_id), True, data=data)
+        return await self._get('accounts/{}/holds'.format(account_id), True, data=data)
 
-    def create_inner_transfer(self, from_account_id, to_account_id, amount, order_id=None):
+    async def create_inner_transfer(self, from_account_id, to_account_id, amount, order_id=None):
         """Get account holds placed for any active orders or pending withdraw requests
 
         https://docs.kucoin.com/#get-holds
@@ -554,11 +560,11 @@ class Client(object):
         else:
             data['clientOid'] = flat_uuid()
 
-        return self._post('accounts/inner-transfer', True, data=data)
+        return await self._post('accounts/inner-transfer', True, data=data)
 
     # Deposit Endpoints
 
-    def create_deposit_address(self, currency):
+    async def create_deposit_address(self, currency):
         """Create deposit address of currency for deposit. You can just create one deposit address.
 
         https://docs.kucoin.com/#create-deposit-address
@@ -587,9 +593,9 @@ class Client(object):
             'currency': currency
         }
 
-        return self._post('deposit-addresses', True, data=data)
+        return await self._post('deposit-addresses', True, data=data)
 
-    def get_deposit_address(self, currency):
+    async def get_deposit_address(self, currency):
         """Get deposit address for a currency
 
         https://docs.kucoin.com/#get-deposit-address
@@ -618,9 +624,9 @@ class Client(object):
             'currency': currency
         }
 
-        return self._get('deposit-addresses', True, data=data)
+        return await self._get('deposit-addresses', True, data=data)
 
-    def get_deposits(self, currency=None, status=None, start=None, end=None, page=None, limit=None):
+    async def get_deposits(self, currency=None, status=None, start=None, end=None, page=None, limit=None):
         """Get deposit records for a currency
 
         https://docs.kucoin.com/#get-deposit-list
@@ -696,11 +702,11 @@ class Client(object):
         if page:
             data['page'] = page
 
-        return self._get('deposits', True, data=data)
+        return await self._get('deposits', True, data=data)
 
     # Withdraw Endpoints
 
-    def get_withdrawals(self, currency=None, status=None, start=None, end=None, page=None, limit=None):
+    async def get_withdrawals(self, currency=None, status=None, start=None, end=None, page=None, limit=None):
         """Get deposit records for a currency
 
         https://docs.kucoin.com/#get-withdrawals-list
@@ -766,9 +772,9 @@ class Client(object):
         if page:
             data['page'] = page
 
-        return self._get('withdrawals', True, data=data)
+        return await self._get('withdrawals', True, data=data)
 
-    def get_withdrawal_quotas(self, currency):
+    async def get_withdrawal_quotas(self, currency):
         """Get withdrawal quotas for a currency
 
         https://docs.kucoin.com/#get-withdrawal-quotas
@@ -804,9 +810,9 @@ class Client(object):
             'currency': currency
         }
 
-        return self._get('withdrawals/quotas', True, data=data)
+        return await self._get('withdrawals/quotas', True, data=data)
 
-    def create_withdrawal(self, currency, amount, address, memo=None, is_inner=False, remark=None):
+    async def create_withdrawal(self, currency, amount, address, memo=None, is_inner=False, remark=None):
         """Process a withdrawal
 
         https://docs.kucoin.com/#apply-withdraw
@@ -853,9 +859,9 @@ class Client(object):
         if remark:
             data['remark'] = remark
 
-        return self._post('withdrawals', True, data=data)
+        return await self._post('withdrawals', True, data=data)
 
-    def cancel_withdrawal(self, withdrawal_id):
+    async def cancel_withdrawal(self, withdrawal_id):
         """Cancel a withdrawal
 
         https://docs.kucoin.com/#cancel-withdrawal
@@ -873,11 +879,11 @@ class Client(object):
 
         """
 
-        return self._delete('withdrawals/{}'.format(withdrawal_id), True)
+        return await self._delete('withdrawals/{}'.format(withdrawal_id), True)
 
     # Order Endpoints
 
-    def create_market_order(self, symbol, side, size=None, funds=None, client_oid=None, remark=None, stp=None):
+    async def create_market_order(self, symbol, side, size=None, funds=None, client_oid=None, remark=None, stp=None):
         """Create a market order
 
         One of size or funds must be set
@@ -940,9 +946,9 @@ class Client(object):
         if stp:
             data['stp'] = stp
 
-        return self._post('orders', True, data=data)
+        return await self._post('orders', True, data=data)
 
-    def create_limit_order(self, symbol, side, price, size, client_oid=None, remark=None,
+    async def create_limit_order(self, symbol, side, price, size, client_oid=None, remark=None,
                            time_in_force=None, stop=None, stop_price=None, stp=None, cancel_after=None, post_only=None,
                            hidden=None, iceberg=None, visible_size=None):
         """Create an order
@@ -1044,9 +1050,9 @@ class Client(object):
             data['iceberg'] = iceberg
             data['visible_size'] = visible_size
 
-        return self._post('orders', True, data=data)
+        return await self._post('orders', True, data=data)
 
-    def cancel_order(self, order_id):
+    async def cancel_order(self, order_id):
         """Cancel an order
 
         https://docs.kucoin.com/#cancel-an-order
@@ -1074,9 +1080,38 @@ class Client(object):
 
         """
 
-        return self._delete('orders/{}'.format(order_id), True)
+        return await self._delete('orders/{}'.format(order_id), True)
 
-    def cancel_all_orders(self, symbol=None):
+    async def cancel_order_client_oid(self, client_oid):
+        """Cancel an order using client oid
+
+        https://docs.kucoin.com/#cancel-single-order-by-clientoid
+
+        :param client_oid: Client order id
+        :type client_oid: string
+
+        .. code:: python
+
+            res = client.cancel_order('asd')
+
+        :returns: ApiResponse
+
+        .. code:: python
+
+            {
+                "cancelledOrderId": "5bd6e9286d99522a52e458de",
+                "clientOid": "asd",
+            }
+
+        :raises: KucoinResponseException, KucoinAPIException
+
+        KucoinAPIException If order_id is not found
+
+        """
+
+        return await self._delete('order/client-order/{}'.format(client_oid), True)
+
+    async def cancel_all_orders(self, symbol=None):
         """Cancel all orders
 
         https://docs.kucoin.com/#cancel-all-orders
@@ -1101,9 +1136,9 @@ class Client(object):
         data = {}
         if symbol is not None:
             data['symbol'] = symbol
-        return self._delete('orders', True, data=data)
+        return await self._delete('orders', True, data=data)
 
-    def get_orders(self, symbol=None, status=None, side=None, order_type=None,
+    async def get_orders(self, symbol=None, status=None, side=None, order_type=None,
                    start=None, end=None, page=None, limit=None):
         """Get list of orders
 
@@ -1197,9 +1232,9 @@ class Client(object):
         if limit:
             data['pageSize'] = limit
 
-        return self._get('orders', True, data=data)
+        return await self._get('orders', True, data=data)
 
-    def get_historical_orders(self, symbol=None, side=None,
+    async def get_historical_orders(self, symbol=None, side=None,
                               start=None, end=None, page=None, limit=None):
         """List of KuCoin V1 historical orders.
 
@@ -1263,9 +1298,9 @@ class Client(object):
         if limit:
             data['pageSize'] = limit
 
-        return self._get('hist-orders', True, data=data)
+        return await self._get('hist-orders', True, data=data)
 
-    def get_order(self, order_id):
+    async def get_order(self, order_id):
         """Get order details
 
         https://docs.kucoin.com/#get-an-order
@@ -1317,11 +1352,11 @@ class Client(object):
 
         """
 
-        return self._get('orders/{}'.format(order_id), True)
+        return await self._get('orders/{}'.format(order_id), True)
 
     # Fill Endpoints
 
-    def get_fills(self, order_id=None, symbol=None, side=None, order_type=None,
+    async def get_fills(self, order_id=None, symbol=None, side=None, order_type=None,
                   start=None, end=None, page=None, limit=None):
         """Get a list of recent fills.
 
@@ -1401,11 +1436,11 @@ class Client(object):
         if limit:
             data['pageSize'] = limit
 
-        return self._get('fills', True, data=data)
+        return await self._get('fills', True, data=data)
 
     # Market Endpoints
 
-    def get_symbols(self):
+    async def get_symbols(self):
         """Get a list of available currency pairs for trading.
 
         https://docs.kucoin.com/#symbols-amp-ticker
@@ -1439,9 +1474,9 @@ class Client(object):
 
         """
 
-        return self._get('symbols', False)
+        return await self._get('symbols', False)
 
-    def get_ticker(self, symbol=None):
+    async def get_ticker(self, symbol=None):
         """Get symbol tick
 
         https://docs.kucoin.com/#get-ticker
@@ -1479,9 +1514,9 @@ class Client(object):
             data = {
                 'symbol': symbol
             }
-        return self._get(tick_path, False, data=data)
+        return await self._get(tick_path, False, data=data)
 
-    def get_fiat_prices(self, base=None, symbol=None):
+    async def get_fiat_prices(self, base=None, symbol=None):
         """Get fiat price for currency
 
         https://docs.kucoin.com/#get-fiat-price
@@ -1518,9 +1553,9 @@ class Client(object):
         if symbol is not None:
             data['currencies'] = symbol
 
-        return self._get('prices', False, data=data)
+        return await self._get('prices', False, data=data)
 
-    def get_24hr_stats(self, symbol):
+    async def get_24hr_stats(self, symbol):
         """Get 24hr stats for a symbol. Volume is in base currency units. open, high, low are in quote currency units.
 
         :param symbol: (optional) Name of symbol e.g. KCS-BTC
@@ -1557,9 +1592,9 @@ class Client(object):
             'symbol': symbol
         }
 
-        return self._get('market/stats', False, data=data)
+        return await self._get('market/stats', False, data=data)
 
-    def get_markets(self):
+    async def get_markets(self):
         """Get supported market list
 
         https://docs.kucoin.com/#get-market-list
@@ -1583,9 +1618,9 @@ class Client(object):
         :raises: KucoinResponseException, KucoinAPIException
 
         """
-        return self._get('markets', False)
+        return await self._get('markets', False)
 
-    def get_order_book(self, symbol):
+    async def get_order_book(self, symbol):
         """Get a list of bids and asks aggregated by price for a symbol.
 
         Returns up to 100 depth each side. Fastest Order book API
@@ -1623,9 +1658,9 @@ class Client(object):
             'symbol': symbol
         }
 
-        return self._get('market/orderbook/level2_100', False, data=data)
+        return await self._get('market/orderbook/level2_100', False, data=data)
 
-    def get_full_order_book(self, symbol):
+    async def get_full_order_book(self, symbol):
         """Get a list of all bids and asks aggregated by price for a symbol.
 
         This call is generally used by professional traders because it uses more server resources and traffic,
@@ -1664,9 +1699,9 @@ class Client(object):
             'symbol': symbol
         }
 
-        return self._get('market/orderbook/level2', False, data=data)
+        return await self._get('market/orderbook/level2', False, data=data)
 
-    def get_full_order_book_level3(self, symbol):
+    async def get_full_order_book_level3(self, symbol):
         """Get a list of all bids and asks non-aggregated for a symbol.
 
         This call is generally used by professional traders because it uses more server resources and traffic,
@@ -1721,9 +1756,9 @@ class Client(object):
             'symbol': symbol
         }
 
-        return self._get('market/orderbook/level3', False, data=data)
+        return await self._get('market/orderbook/level3', False, data=data)
 
-    def get_trade_histories(self, symbol):
+    async def get_trade_histories(self, symbol):
         """List the latest trades for a symbol
 
         https://docs.kucoin.com/#get-trade-histories
@@ -1764,9 +1799,9 @@ class Client(object):
             'symbol': symbol
         }
 
-        return self._get('market/histories', False, data=data)
+        return await self._get('market/histories', False, data=data)
 
-    def get_kline_data(self, symbol, kline_type='5min', start=None, end=None):
+    async def get_kline_data(self, symbol, kline_type='5min', start=None, end=None):
         """Get kline data
 
         For each query, the system would return at most 1500 pieces of data.
@@ -1832,11 +1867,11 @@ class Client(object):
         else:
             data['endAt'] = int(time.time())
 
-        return self._get('market/candles', False, data=data)
+        return await self._get('market/candles', False, data=data)
 
     # Websocket Endpoints
 
-    def get_ws_endpoint(self, private=False):
+    async def get_ws_endpoint(self, private=False):
         """Get websocket channel details
 
         :param private: Name of symbol e.g. KCS-BTC
@@ -1877,4 +1912,4 @@ class Client(object):
         if private:
             path = 'bullet-private'
 
-        return self._post(path, signed)
+        return await self._post(path, signed)
