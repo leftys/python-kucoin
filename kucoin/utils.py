@@ -1,4 +1,4 @@
-import json
+import ujson
 import uuid
 
 
@@ -17,4 +17,4 @@ def compact_json_dict(data):
     :return: str
 
     """
-    return json.dumps(data, separators=(',', ':'), ensure_ascii=False)
+    return ujson.dumps(data, ensure_ascii=False)
