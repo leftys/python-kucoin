@@ -58,9 +58,6 @@ class ReconnectingWebsocket:
                     except asyncio.TimeoutError:
                         self._log.debug("no message in {} seconds".format(self._get_ws_pingtimeout()))
                         await self.send_ping()
-                    except asyncio.CancelledError:
-                        self._log.debug("cancelled error")
-                        await self._socket.ping()
                     else:
                         try:
                             evt_obj = json.loads(evt)
@@ -71,6 +68,9 @@ class ReconnectingWebsocket:
             except ws.ConnectionClosed:
                 keep_waiting = False
                 await self._reconnect()
+            except asyncio.CancelledError:
+                keep_waiting = False
+                self._log.debug('ws cancelled')
             except Exception as e:
                 self._log.warning('ws exception:{}'.format(e))
                 keep_waiting = False
