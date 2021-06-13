@@ -7,7 +7,7 @@ import hmac
 import time
 from datetime import datetime
 
-import httpx
+import aiohttp
 import ujson
 
 from .exceptions import (
@@ -77,21 +77,23 @@ class Client(object):
             self.API_URL = self.REST_API_URL
 
         self._requests_params = requests_params
-        self.session: Optional[httpx.Client] = None
+        self.session: Optional[aiohttp.ClientSession] = None
 
     async def start(self):
-        headers = {'Accept': 'application/json',
-                   'User-Agent': 'python-kucoin',
-                   'Content-Type': 'application/json',
-                   'KC-API-KEY': self.API_KEY,
-                   'KC-API-PASSPHRASE': self.API_PASSPHRASE}
-        self.session = httpx.AsyncClient(
-            # http2 = True,
-            headers = headers
+        headers = {
+            'Accept': 'application/json',
+            'User-Agent': 'python-kucoin',
+            'Content-Type': 'application/json',
+            'KC-API-KEY': self.API_KEY,
+            'KC-API-PASSPHRASE': self.API_PASSPHRASE
+        }
+        self.session = aiohttp.ClientSession(
+            headers= headers,
+            json_serialize = ujson.dumps,
         )
 
     async def stop(self):
-        await self.session.aclose()
+        await self.session.close()
 
     @staticmethod
     def _get_params_for_sig(data):
@@ -124,7 +126,7 @@ class Client(object):
             data_json = compact_json_dict(data)
         sig_str = ("{}{}{}{}".format(nonce, method.upper(), endpoint, data_json)).encode('utf-8')
         m = hmac.new(self.API_SECRET.encode('utf-8'), sig_str, hashlib.sha256)
-        return base64.b64encode(m.digest())
+        return base64.b64encode(m.digest()).decode('utf-8')
 
     def _create_path(self, path):
         return '/api/{}/{}'.format(self.API_VERSION, path)
@@ -161,25 +163,25 @@ class Client(object):
             kwargs['data'] = compact_json_dict(kwargs['data'])
 
         response = await self.session.request(method, uri, **kwargs)
-        return self._handle_response(response)
+        return await self._handle_response(response)
 
     @staticmethod
-    def _handle_response(response):
+    async def _handle_response(response: aiohttp.ClientResponse):
         """Internal helper for handling API responses from the Quoine server.
         Raises the appropriate exceptions when necessary; otherwise, returns the
         response.
         """
 
-        if not str(response.status_code).startswith('2'):
-            raise KucoinAPIException(response)
+        if not str(response.status).startswith('2'):
+            raise KucoinAPIException(response, await response.text())
         try:
-            res = ujson.loads(response.content)
+            res = ujson.loads(await response.text())
 
             if 'code' in res and res['code'] != "200000":
-                raise KucoinAPIException(response)
+                raise KucoinAPIException(response, await response.text())
 
             if 'success' in res and not res['success']:
-                raise KucoinAPIException(response)
+                raise KucoinAPIException(response, await response.text())
 
             # by default return full response
             # if it's a normal response we have a data attribute, return that
@@ -187,7 +189,7 @@ class Client(object):
                 res = res['data']
             return res
         except ValueError:
-            raise KucoinRequestException('Invalid Response: %s' % response.text)
+            raise KucoinRequestException('Invalid Response: %s' % await response.text)
 
     async def _get(self, path, signed=False, **kwargs):
         return await self._request('get', path, signed, **kwargs)

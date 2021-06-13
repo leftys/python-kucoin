@@ -42,7 +42,7 @@ def find_version(*file_paths):
 
 def install_requires():
 
-    requires = ['requests']
+    requires = ['aiohttp==3.7.4.post0']
     if sys.version_info > (3, 4):
         requires.extend(['websockets'])
     return requires

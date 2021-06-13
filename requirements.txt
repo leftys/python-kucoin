@@ -1,2 +1,2 @@
 ujson
-httpx[http2]
+aiohttp==3.7.4.post0
